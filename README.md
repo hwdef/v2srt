@@ -4,7 +4,7 @@ v2srt 是一个基于人工智能的视频字幕生成工具，能够快速、�
 
 ## ✨ 功能特点
 
-- **🎯 本地运行**: 使用 whisper.cpp 在本地运行 Whisper 模型生成字幕，无需依赖云服务
+- **🎯 本地运行**: 使用 [whisper.cpp](https://github.com/ggerganov/whisper.cpp) 在本地运行 Whisper 模型生成字幕，无需依赖云服务
 - **⚡ GPU 加速**: 支持使用 GPU 运行模型，大幅提升字幕生成速度
 - **🌐 智能翻译**: 集成 Gemini API，支持将生成的字幕自动翻译成中文（可选）
 - **🎙️ 人声检测**: 使用 Silero VAD 模型进行人声活动检测，提高字幕准确性（可选）
@@ -30,8 +30,7 @@ pip install -r requirements.txt
 指定Whisper模型和视频文件路径，即可为视频生成其对应语言的字幕文件：
 
 ```bash
-python v2srt.py -wm path/to/whisper_model.bin \
-    -i /path/to/your_video.mp4
+python v2srt.py -wm path/to/whisper_model.bin /path/to/your_video.mp4
 ```
 
 ### 手工指定语言
