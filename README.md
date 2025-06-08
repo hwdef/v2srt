@@ -125,6 +125,28 @@ v2srt 支持使用 Google Gemini API 进行智能翻译：
 2. 在命令行中使用 `-gk` 参数提供API密钥
 3. 程序会自动将识别出的文本翻译成中文
 
+### 使用代理访问 Gemini API
+
+对于中国大陆用户，如果无法直接访问 Gemini API，可以通过设置代理来解决：
+
+比如：
+
+```bash
+# Windows
+set GRPC_PROXY=http://127.0.0.1:1080
+python v2srt.py -wm path/to/whisper_model.bin -gk your_gemini_api_key /path/to/your_video.mp4
+
+# Linux/Mac
+export GRPC_PROXY=http://127.0.0.1:1080
+python v2srt.py -wm path/to/whisper_model.bin -gk your_gemini_api_key /path/to/your_video.mp4
+```
+
+或者：
+
+```bash
+GRPC_PROXY=http://127.0.0.1:1080 python v2srt.py -wm path/to/whisper_model.bin -gk your_gemini_api_key /path/to/your_video.mp4
+```
+
 ## ⚠️ 注意事项
 
 - 将 FFmpeg、Whisper.cpp 的二进制文件添加到系统 PATH 环境变量中
