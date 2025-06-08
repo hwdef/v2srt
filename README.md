@@ -39,8 +39,6 @@ python v2srt.py -wm path/to/whisper_model.bin /path/to/your_video.mp4
 
 ```bash
 python v2srt.py -wm path/to/whisper_model.bin \
-    -gm gemini-2.5-flash-preview-05-20 \
-    -gk your_gemini_api_key \
     -l ja \
     /path/to/your_video.mp4
 ```
@@ -111,9 +109,9 @@ python v2srt.py -wm path/to/whisper_model.bin \
 
 你可以在[ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp/tree/main)下载预训练模型，推荐选择下面三个系列，如果显卡性能较好可以选择large：
 
-- `ggml-small.bin` - 更好的准确性
-- `ggml-medium.bin` - 高准确性，速度较慢
-- `ggml-large.bin` - 最佳准确性，最慢
+- `ggml-small.bin` - 速度较快，准确性一般
+- `ggml-medium.bin` - 速度较慢，准确性较高
+- `ggml-large.bin` - 速度最慢，准确性最高
 
 ### VAD 模型
 
