@@ -1,0 +1,7 @@
+/venv/
+*.srt
+*.mp4
+*.wav
+*.json
+*.avi
+/.idea/
