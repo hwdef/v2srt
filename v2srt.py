@@ -131,7 +131,7 @@ class VideoHandler(object):
         for entry in entries.values():
             entries_text += f"[{entry.index}] {entry.text}\n"
 
-        prompt = f"""请将以下日语字幕翻译成中文，请注意以下要求：
+        prompt = f"""请将以下内容翻译成中文，请注意以下要求：
 
 1. 保持原文的情感色彩和语调
 2. 使用符合中文表达习惯的自然翻译
