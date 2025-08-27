@@ -8,60 +8,51 @@ import tempfile
 import atexit
 import sys
 import re
-from typing import Union, List, Iterable, Tuple, Mapping
-from itertools import pairwise, batched
-from google import genai
-from google.genai import types
+import openai
+from typing import Union, Mapping
+from itertools import batched
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 seconds_pattern = re.compile(r'\d{2}:\d{2}:\d{2},\d{3}')
 seconds_with_milliseconds_pattern = re.compile(r'\d{2}:\d{2}:\d{2}')
-default_gemini_model = 'gemini-2.5-flash-preview-05-20'
 
 
 class VideoHandler(object):
-    def __init__(self, whisper_model: str, gemini_model: str = default_gemini_model, gemini_api_key: str = '',
-                 vad_model: str = '', language: str = 'auto', cut_times: 'List[TimeCode]' = None):
+    def __init__(self, whisper_model: str, openai_model: str , openai_api_key: str, language: str, url: str):
         self.whisper_model = whisper_model
-        self.gemini_model = gemini_model
-        self.vad_model = vad_model
+        self.openai_model = openai_model
         self.language = language
-        self.cut_times = cut_times or []
         self.base_path = tempfile.mkdtemp(prefix='v2srt')
         self.translate_threshold = 50
-        if gemini_api_key:
-            self.gemini_client = genai.Client(api_key=gemini_api_key)
+        if openai_api_key:
+            self.openai_client = openai.OpenAI(api_key=openai_api_key, base_url=url)
         else:
-            self.gemini_client = None
+            self.openai_client = None
         atexit.register(self.cleanup)
         logging.info("base working directory: %s", self.base_path)
 
-    def run(self, video_path: str, output_path: str):
+    def run(self, video_path: str, output: str):
         wav_path = self.video_to_wav(video_path)
         logging.info("wav file path: %s", wav_path)
-        with open(output_path, 'w', encoding='utf-8') as fout:
+        with open(output+'.srt', 'w', encoding='utf-8') as fout:
+            transcription_path = self.generate_transcription(wav_path)
+            logging.info("transcription file path: %s", transcription_path)
+            with open(transcription_path, 'rb') as fin:
+                data = json.load(fin)
+            
             base = 1
-            for base_time, cut_wav_path in self.cut_wav(wav_path):
-                logging.info("cut wav base time: %s, file path: %s", str(base_time), cut_wav_path)
-                transcription_path = self.generate_transcription(cut_wav_path)
-                logging.info("transcription file path: %s", transcription_path)
+            for batch in batched(data['segments'], self.translate_threshold):
+                logging.info("start to translate from No.%d to No.%d", base, base+len(batch)-1)
+                entries = {base+i: SRTEntry(index=base+i, start_time=segment['start'],
+                                end_time=segment['end'], text=segment["text"]) for i, segment in enumerate(batch)}
+                base += len(batch)
+                if self.openai_client:
+                    self.translate_batch(entries)
 
-                with open(transcription_path, 'rb') as fin:
-                    data = json.load(fin)
-
-                for batch in batched(data['transcription'], self.translate_threshold):
-                    logging.info("start to translate from No.%d to No.%d", base, base+len(batch)-1)
-                    entries = {base+i: SRTEntry(index=base+i, start_time=entry['timestamps']['from'],
-                                        end_time=entry['timestamps']['to'], text=entry["text"]) for i, entry in enumerate(batch)}
-                    base += len(batch)
-
-                    if self.gemini_client:
-                        self.translate_batch(entries)
-
-                    for entry in entries.values():
-                        fout.write(str(entry))
-
-                fout.flush()
+                for entry in entries.values():
+                    fout.write(str(entry))
+            
+            fout.flush()
 
     def video_to_wav(self, video_path: str) -> str:
         _, name = os.path.split(video_path)
@@ -72,44 +63,24 @@ class VideoHandler(object):
                         "pcm_s16le", "-loglevel", "fatal", wav_file])
         return wav_file
 
-    def cut_wav(self, wav_path: str) -> 'Iterable[Tuple[TimeCode, str]]':
-        basename, ext = os.path.splitext(wav_path)
-        pairs = pairwise([TimeCode('00:00:00,000'), *self.cut_times, 'end'])
-        i = 1
-        for start, to in pairs:
-            cmd = ["ffmpeg", "-i", wav_path]
-            if start.is_zero() and to == 'end':
-                yield start, wav_path
-                break
-
-            cmd.extend(['-ss', start.without_millis()])
-            if to != 'end':
-                cmd.extend(['-to', to.without_millis()])
-
-            output_path = f"{basename}-{i}.wav"
-            i += 1
-            cmd.extend(["-c", "copy", "-loglevel", "error", output_path])
-            subprocess.run(cmd)
-            yield start, output_path
-
     def generate_transcription(self, wav_path: str) -> str:
         basename, _ = os.path.splitext(wav_path)
-        cmd = ["whisper-cli.exe", "-l", self.language, "-oj", "-m", self.whisper_model]
-        if self.vad_model:
-            cmd.extend(['--vad', '--vad-threshold', '0.3', '--vad-model', self.vad_model])
-        cmd.extend(['--output-file', basename, '--no-prints', '--print-progress', wav_path])
-        subprocess.run(cmd)
+        cmd = ["whisper", "--language", self.language, "--model", self.whisper_model, '--output_dir', self.base_path, wav_path]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL)
         return f'{basename}.json'
 
     def translate_batch(self, entries: 'Mapping[int, SRTEntry]'):
+        logging.info("Start translating...")
         prompt = self.create_translation_prompt(entries)
-        response = self.gemini_client.models.generate_content(
-            model=self.gemini_model,
-            contents=prompt,
+        response = self.openai_client.chat.completions.create(
+            model=self.openai_model,
+            messages=[
+                {"role": "system", "content": "You are a translator for video subtitles."},
+                {"role": "user", "content": prompt}
+            ]
         )
-        translation_text = response.text
+        translation_text = response.choices[0].message.content
 
-        # 解析翻译结果
         lines = translation_text.strip().split('\n')
 
         for line in lines:
@@ -117,14 +88,14 @@ class VideoHandler(object):
             if not line:
                 continue
 
-            # 匹配格式：[序号] 翻译文本
             match = re.match(r'\[(\d+)\]\s*(.+)', line)
             if match:
                 index = int(match.group(1))
                 translated_text = match.group(2).strip()
-                entries[index].text = translated_text
-                logging.info("[No.%d] - [%s --> %s] %s", index,
-                             entries[index].start_time, entries[index].end_time, translated_text)
+                original_text = entries[index].text
+                entries[index].text = f"{original_text}\n{translated_text}"
+
+        logging.info("Translation completed.")
 
     def create_translation_prompt(self, entries: 'Mapping[int, SRTEntry]') -> str:
         entries_text = ""
@@ -215,30 +186,25 @@ def valid_file(s: str) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Generate srt file from video by Whisper.cpp')
+    parser = argparse.ArgumentParser(description='Generate srt file from video by Whisper')
     parser.add_argument('input_file', type=valid_file, help='input filename')
-    parser.add_argument('-wm', '--model', required=True, type=valid_file, help='Whisper.cpp model file path')
-    parser.add_argument('-vm', '--vad-model', type=valid_file,
-                        help='Whisper.cpp vad model file path, ignore vad if not provided')
-    parser.add_argument('-gm', '--gemini-model', type=str, default=default_gemini_model,
-                        help='use which gemini model to translate transcription')
-    parser.add_argument('-gk', '--gemini-key', type=str, help='gemini key, no translation will be done if not set')
-    parser.add_argument('-l', '--language', default='auto', help='language, default is "auto"')
-    parser.add_argument('-c', '--cut-times', nargs='*', help='time to split the video, example: -c 10:00:00 50:00:00')
+    parser.add_argument('-wm', '--model', default='turbo', type=str, help='Whisper model name, default is "turbo"')
+    parser.add_argument('-om', '--openai-model', type=str, default="google/gemini-2.5-flash",
+                        help='use which deepseek model to translate transcription')
+    parser.add_argument('-ok', '--openai-key', type=str, help='openai key, no translation will be done if not set')
+    parser.add_argument('-l', '--language', default='en', help='language, default is "en"')
     parser.add_argument('-o', '--output', help='output filename (default [original].srt)')
+    parser.add_argument('-url', '--url', type=str, default="https://openrouter.ai/api/v1",
+                        help='the base url for openai compatible api, default is "https://openrouter.ai/api/v1"')
     args = parser.parse_args()
 
-    if not args.cut_times:
-        cut_times = []
-    else:
-        cut_times = [TimeCode(ct) for ct in args.cut_times]
 
     output = args.output
     if not output:
-        output = os.path.splitext(args.input_file)[0] + '.srt'
+        output = os.path.splitext(args.input_file)[0]
 
-    handler = VideoHandler(whisper_model=args.model, gemini_model=args.gemini_model, gemini_api_key=args.gemini_key,
-                           vad_model=args.vad_model, language=args.language, cut_times=cut_times)
+    handler = VideoHandler(whisper_model=args.model, openai_model=args.openai_model, openai_api_key=args.openai_key,
+                           language=args.language, url=args.url)
     handler.run(args.input_file, output)
 
 
